@@ -810,7 +810,8 @@ public static class AnthropicClientExtensions
                                     {
                                         foreach (JsonProperty p in propsElement.EnumerateObject())
                                         {
-                                            properties[p.Name] = p.Value;
+                                            // Filter unsupported JSON Schema properties from each property definition
+                                            properties[p.Name] = FilterPropertySchema(p.Value);
                                         }
                                     }
 
@@ -1070,6 +1071,140 @@ public static class AnthropicClientExtensions
             public string CallId { get; set; } = "";
             public string Name { get; set; } = "";
             public StringBuilder Arguments { get; } = new();
+        }
+
+        /// <summary>
+        /// Filters unsupported JSON Schema properties from a property definition.
+        /// </summary>
+        /// <remarks>
+        /// The Anthropic API (and Azure AI Foundry routing to Anthropic models) only supports
+        /// a subset of JSON Schema. Properties like "default", validation constraints, and
+        /// format specifiers are not supported and will cause API errors if included.
+        /// This method removes such properties while preserving the core schema structure.
+        /// </remarks>
+        private static JsonElement FilterPropertySchema(JsonElement propertySchema)
+        {
+            if (propertySchema.ValueKind is not JsonValueKind.Object)
+            {
+                return propertySchema;
+            }
+
+            // Properties not supported by Anthropic tool schemas.
+            // Based on Anthropic documentation and Azure AI Foundry compatibility requirements.
+            HashSet<string> unsupportedProperties =
+            [
+                // Default values - not supported, causes "Extra inputs are not permitted"
+                "default",
+
+                // Numeric constraints - not supported
+                "minimum",
+                "maximum",
+                "exclusiveMinimum",
+                "exclusiveMaximum",
+                "multipleOf",
+
+                // String constraints - not supported
+                "minLength",
+                "maxLength",
+                "pattern",
+                "format",
+                "contentEncoding",
+                "contentMediaType",
+
+                // Array constraints - not supported
+                "minItems",
+                "maxItems",
+                "uniqueItems",
+                "contains",
+                "minContains",
+                "maxContains",
+
+                // Object constraints - not supported
+                "minProperties",
+                "maxProperties",
+                "patternProperties",
+                "additionalProperties",
+                "propertyNames",
+
+                // Composition keywords that may cause issues
+                "not",
+                "if",
+                "then",
+                "else",
+
+                // Schema metadata that's not needed
+                "$schema",
+                "$id",
+                "$ref",
+                "$defs",
+                "definitions",
+                "examples",
+                "deprecated",
+                "readOnly",
+                "writeOnly",
+            ];
+
+            using var stream = new System.IO.MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+
+                foreach (JsonProperty prop in propertySchema.EnumerateObject())
+                {
+                    if (unsupportedProperties.Contains(prop.Name))
+                    {
+                        continue;
+                    }
+
+                    // Recursively filter nested schemas (e.g., in "items" for arrays, "properties" for objects)
+                    if (
+                        prop.Name is "items" or "additionalItems"
+                        && prop.Value.ValueKind is JsonValueKind.Object
+                    )
+                    {
+                        writer.WritePropertyName(prop.Name);
+                        FilterPropertySchema(prop.Value).WriteTo(writer);
+                    }
+                    else if (
+                        prop.Name is "properties"
+                        && prop.Value.ValueKind is JsonValueKind.Object
+                    )
+                    {
+                        writer.WritePropertyName("properties");
+                        writer.WriteStartObject();
+                        foreach (JsonProperty nestedProp in prop.Value.EnumerateObject())
+                        {
+                            writer.WritePropertyName(nestedProp.Name);
+                            FilterPropertySchema(nestedProp.Value).WriteTo(writer);
+                        }
+
+                        writer.WriteEndObject();
+                    }
+                    else if (
+                        prop.Name is "allOf" or "anyOf" or "oneOf"
+                        && prop.Value.ValueKind is JsonValueKind.Array
+                    )
+                    {
+                        writer.WritePropertyName(prop.Name);
+                        writer.WriteStartArray();
+                        foreach (JsonElement item in prop.Value.EnumerateArray())
+                        {
+                            FilterPropertySchema(item).WriteTo(writer);
+                        }
+
+                        writer.WriteEndArray();
+                    }
+                    else
+                    {
+                        prop.WriteTo(writer);
+                    }
+                }
+
+                writer.WriteEndObject();
+            }
+
+            stream.Position = 0;
+            return JsonDocument.Parse(stream).RootElement.Clone();
         }
     }
 
