@@ -46,12 +46,23 @@ public interface IFileService
     /// <summary>
     /// Download File
     /// </summary>
+    /// <remarks>
+    /// The caller is responsible for disposing the returned <see cref="HttpResponse"/>.
+    /// Unlike other methods in this service, this method returns the raw response
+    /// for streaming access to file content.
+    /// </remarks>
+    /// <param name="parameters">The download parameters.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The HTTP response containing the file content. Must be disposed by the caller.</returns>
     Task<HttpResponse> Download(
         FileDownloadParams parameters,
         CancellationToken cancellationToken = default
     );
 
     /// <inheritdoc cref="Download(FileDownloadParams, CancellationToken)"/>
+    /// <param name="fileID">The file ID to download.</param>
+    /// <param name="parameters">Optional download parameters.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
     Task<HttpResponse> Download(
         string fileID,
         FileDownloadParams? parameters = null,

@@ -112,7 +112,9 @@ public sealed class FileService : IFileService
             Method = HttpMethod.Get,
             Params = parameters,
         };
-        using var response = await this
+        // Note: We intentionally do not dispose the response here.
+        // The caller is responsible for disposing the returned HttpResponse.
+        var response = await this
             ._client.Execute(request, cancellationToken)
             .ConfigureAwait(false);
         return response;
